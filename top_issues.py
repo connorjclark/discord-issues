@@ -6,7 +6,6 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import List, Union
 
 import discord
@@ -15,12 +14,11 @@ from discord.ext import commands
 root_dir = Path(os.path.dirname(os.path.realpath(__file__)))
 
 ZC_GUILD_ID = 876899628556091432
-CHANNEL = 1021382849603051571
-SUMMARY_THREAD_ID = 1286204242951934016
-
 CHANNELS_TO_SUMMARIZE = {
-    # Top issues.
-    1021382849603051571: 1286204242951934016,
+    # Top bugs.
+    1021382849603051571: 1286523088900591699,
+    # Top feature requests.
+    1021385902708248637: 1286512335829336146,
 }
 
 
@@ -64,22 +62,30 @@ def is_upvote_reaction(reaction: discord.Reaction):
     return reaction.emoji.name == 'this'
 
 
-async def process_channel(bot: commands.Bot, id: int):
-    guild = bot.get_guild(ZC_GUILD_ID)
-    channel = guild.get_channel(id)
-
+async def get_issues_from_channel(
+    bot: commands.Bot, channel: discord.ForumChannel, summary_thread_id: int
+):
     issues: List[Issue] = []
     for thread in await get_all_threads(channel):
-        if thread.id == SUMMARY_THREAD_ID:
+        if thread.id == summary_thread_id or thread.parent_id == summary_thread_id:
             continue
 
+        closed_tag_names = [
+            'Already Exists',
+            'Closed',
+            'Denied',
+            'Fixed',
+            'Stale',
+        ]
         is_open = next((t for t in thread.applied_tags if t.name == 'Open'), None)
-        is_closed = next((t for t in thread.applied_tags if t.name == 'Closed'), None)
+        is_closed = next(
+            (t for t in thread.applied_tags if t.name in closed_tag_names), None
+        )
         dev_disc = next(
             (t for t in thread.applied_tags if t.name == 'DevDiscussion'), None
         )
 
-        if dev_disc:
+        if dev_disc and not is_open:
             continue
 
         status = 'unknown'
@@ -106,35 +112,41 @@ async def process_channel(bot: commands.Bot, id: int):
                 tags=thread.applied_tags,
             )
         )
+        # if len(issues) > 25:
+        #     break
 
     return issues
 
 
-async def send_and_split(messagable: discord.threads.Messageable, content: str):
+def split_message_content(content: str):
     # https://stackoverflow.com/a/72943629/2788187
     start_idx = 0
     length = 1999
     end_idx = 0
+    chunks = []
     while end_idx < len(content):
         end_idx = content.rfind("\n", start_idx, length + start_idx) + 1
-        await messagable.send(content=content[start_idx:end_idx])
+        chunks.append(content[start_idx:end_idx])
         start_idx = end_idx
+    return chunks
 
 
-@bot.event
-async def on_ready():
+async def process_channel(bot: commands.Bot, channel_id: int, summary_thread_id: int):
     guild = bot.get_guild(ZC_GUILD_ID)
+    channel = guild.get_channel(channel_id)
+    # await channel.create_thread(name='Top Bug Reports', content='Top Bug Reports')
+    # sys.exit(1)
+    summary_thread = channel.get_thread(summary_thread_id)
     this_emoji = guild.get_emoji(877358416992030731)
 
-    # channel = guild.get_channel(CHANNEL)
-    # thread = channel.get_thread(SUMMARY_THREAD_ID)
-    # await channel.create_thread(name='Top Issues', content='Top Issues')
-    # sys.exit(1)
+    print('collecting issues')
 
     issues: List[Issue] = []
-    for thread in await process_channel(bot, CHANNEL):
+    for thread in await get_issues_from_channel(bot, channel, summary_thread):
         issues.append(thread)
     issues = sorted(issues, key=lambda issue: -issue.votes)
+
+    print('done collecting issues')
 
     open_issues = []
     pending_issues = []
@@ -152,30 +164,59 @@ async def on_ready():
     content += f'# Open ({len(open_issues)})\n'
     for issue in open_issues:
         issue.tags = [t for t in issue.tags if t.name != 'Open']
-        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} | [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
+        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
     if not open_issues:
         content += 'None\n'
 
-    content += '\n# Pending\n'
+    content += f'# Pending ({len(pending_issues)})\n'
     for issue in pending_issues:
-        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} | [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
+        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
     if not pending_issues:
         content += 'None\n'
 
     if unknown_issues:
         content += '\n# ???\n'
         for issue in unknown_issues:
-            content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} | [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
+            content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
 
-    channel = guild.get_channel(CHANNEL)
-    thread = channel.get_thread(SUMMARY_THREAD_ID)
+    # TODO
+    # content += f'# Fixed in the last month ({len(pending_issues)})\n'
 
-    # TODO: edit in-place.
-    messages = [x async for x in thread.history(oldest_first=True, limit=None)][1:]
-    for m in messages:
+    chunks = split_message_content(content)
+    print(f'update content: {len(chunks)} messages needed')
+
+    existing_messages = [
+        x
+        async for x in summary_thread.history(oldest_first=True, limit=None)
+        if not x.is_system()
+    ]
+    first_message = existing_messages[0]
+    existing_messages = existing_messages[1:]
+
+    # Legend.
+    content = ''
+    for i, tag in enumerate(channel.available_tags):
+        content += f'{tag.emoji}  {tag.name}\n'
+    await first_message.edit(content=content)
+
+    for i, chunk in enumerate(chunks):
+        if i >= len(existing_messages):
+            await summary_thread.send(content=chunk)
+        else:
+            await existing_messages[i].edit(content=chunk)
+    for m in existing_messages[len(chunks) :]:
         await m.delete()
-    await send_and_split(thread, content)
 
+    print(f'done updating content')
+
+
+@bot.event
+async def on_ready():
+    for channel_id, summary_thread_id in CHANNELS_TO_SUMMARIZE.items():
+        print(f'processing channel {channel_id}')
+        await process_channel(bot, channel_id, summary_thread_id)
+
+    print('done')
     await bot.close()
 
 

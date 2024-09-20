@@ -1,0 +1,18 @@
+name: "Update top issues"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  update-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: git clone
+        uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.4'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python top_issues.py ${{ secrets.DISCORD_TOKEN }}

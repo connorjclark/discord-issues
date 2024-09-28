@@ -3,12 +3,14 @@ import json
 import os
 import re
 import sys
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Union
 
 import discord
+
 from discord.ext import commands
 
 root_dir = Path(os.path.dirname(os.path.realpath(__file__)))
@@ -163,7 +165,7 @@ async def process_channel(bot: commands.Bot, channel_id: int, summary_thread_id:
 
     content += f'# Open ({len(open_issues)})\n'
     for issue in open_issues:
-        issue.tags = [t for t in issue.tags if t.name != 'Open']
+        issue.tags = [t for t in issue.tags if t.name != 'Open' and t.name != 'Unassigned']
         content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
     if not open_issues:
         content += 'None\n'

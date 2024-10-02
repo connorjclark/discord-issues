@@ -5,7 +5,7 @@ on:
     - cron: "0 * * * *"
 
 jobs:
-  update-database:
+  update-top-issues:
     runs-on: ubuntu-latest
     steps:
       - name: git clone

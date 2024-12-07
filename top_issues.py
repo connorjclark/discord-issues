@@ -38,6 +38,9 @@ class Issue:
             str(t.emoji) for t in self.tags if t.emoji and not isinstance(t.emoji, str)
         )
 
+    def has_tag(self, name: str):
+        return next((t for t in self.tags if t.name == name), None) != None
+
 
 def create_bot():
     intents = discord.Intents.default()
@@ -70,6 +73,8 @@ async def get_issues_from_channel(
     issues: List[Issue] = []
     for thread in await get_all_threads(channel):
         if thread.id == summary_thread_id or thread.parent_id == summary_thread_id:
+            continue
+        if thread.name == 'Top Bug Reports' or thread.name == 'Top Feature Requests':
             continue
 
         closed_tag_names = [
@@ -133,6 +138,15 @@ def split_message_content(content: str):
     return chunks
 
 
+def create_section(label: str, issues: List[Issue], this_emoji) -> str:
+    content = f'# {label} ({len(issues)})\n'
+    for issue in issues:
+        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
+    if not issues:
+        return 'None\n'
+    return content
+
+
 async def process_channel(bot: commands.Bot, channel_id: int, summary_thread_id: int):
     guild = bot.get_guild(ZC_GUILD_ID)
     channel = guild.get_channel(channel_id)
@@ -153,36 +167,41 @@ async def process_channel(bot: commands.Bot, channel_id: int, summary_thread_id:
     open_issues = []
     pending_issues = []
     unknown_issues = []
+    highprio_issues = []
+    lowprio_issues = []
     for issue in issues:
-        if issue.status == 'open':
-            open_issues.append(issue)
-        elif issue.status == 'pending':
+        if issue.status == 'pending':
             pending_issues.append(issue)
         elif issue.status == 'unknown':
             unknown_issues.append(issue)
+        elif issue.status == 'open':
+            if issue.has_tag('High Priority'):
+                highprio_issues.append(issue)
+            elif issue.has_tag('Low Priority'):
+                lowprio_issues.append(issue)
+            else:
+                open_issues.append(issue)
+                issue.tags = [
+                    t for t in issue.tags if t.name != 'Open' and t.name != 'Unassigned'
+                ]
 
     content = ''
 
-    content += f'# Open ({len(open_issues)})\n'
-    for issue in open_issues:
-        issue.tags = [t for t in issue.tags if t.name != 'Open' and t.name != 'Unassigned']
-        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
-    if not open_issues:
-        content += 'None\n'
-
-    content += f'# Pending ({len(pending_issues)})\n'
-    for issue in pending_issues:
-        content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
-    if not pending_issues:
-        content += 'None\n'
-
+    if pending_issues:
+        content += create_section('Pending', pending_issues, this_emoji)
+    if highprio_issues:
+        content += create_section('Open - High Priority', highprio_issues, this_emoji)
+    content += create_section('Open', open_issues, this_emoji)
+    if lowprio_issues:
+        content += create_section('Open - Low Priority', lowprio_issues, this_emoji)
     if unknown_issues:
-        content += '\n# ???\n'
-        for issue in unknown_issues:
-            content += f'`{str(issue.votes).rjust(2, " ")}` {this_emoji} [{issue.name}]({issue.url}) {issue.get_tag_str()}\n'
+        content += create_section('Unknown', unknown_issues, this_emoji)
 
     # TODO
     # content += f'# Fixed in the last month ({len(pending_issues)})\n'
+
+    # print(content)
+    # sys.exit(1)
 
     chunks = split_message_content(content)
     print(f'update content: {len(chunks)} messages needed')

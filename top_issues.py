@@ -200,7 +200,7 @@ async def process_channel(bot: commands.Bot, channel_id: int, summary_thread_id:
     # TODO
     # content += f'# Fixed in the last month ({len(pending_issues)})\n'
 
-    # print(content)
+    print(content)
     # sys.exit(1)
 
     chunks = split_message_content(content)

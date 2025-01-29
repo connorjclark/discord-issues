@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 from typing import List
 
 import discord
+
 from discord.ext import commands
 
 root_dir = Path(os.path.dirname(os.path.realpath(__file__)))
@@ -46,11 +48,13 @@ class Issue:
 
 
 def load_state():
-    return json.loads((root_dir / 'state.json').read_text('utf-8'))
+    return json.loads((root_dir / 'data/discord_to_gh/state.json').read_text('utf-8'))
 
 
 def save_state():
-    return (root_dir / 'state.json').write_text(json.dumps(state, indent=2))
+    return (root_dir / 'data/discord_to_gh/state.json').write_text(
+        json.dumps(state, indent=2)
+    )
 
 
 state = load_state()
@@ -201,7 +205,7 @@ async def on_ready():
     save_state()
 
     print(f'found {len(issues)} issue threads\n\n')
-    (root_dir / 'dump.json').write_text(
+    (root_dir / 'data/discord_to_gh/dump.json').write_text(
         json.dumps([i.to_serializable_dict() for i in issues], indent=2)
     )
 
